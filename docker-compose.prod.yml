@@ -1,0 +1,73 @@
+# docker-compose.prod.yml — DigitalOcean droplet production override.
+#
+# Usage (on the droplet, from the repo root):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# What this override changes vs the base (local-dev) compose:
+#   1. Adds a Caddy reverse proxy as the ONLY publicly published service (ports 80+443).
+#      It serves the SPA and proxies the backend HTTP API + the /ws/stream WebSocket on the
+#      same origin (no cross-origin/CORS hop) and auto-provisions Let's Encrypt TLS.
+#   2. Relies on the droplet .env setting BIND_HOST=127.0.0.1 so every base-compose
+#      published port (kafka 29092 PLAINTEXT, flink UI 8081 = arbitrary job submission,
+#      producer metrics 8001, backend 8000, frontend 5173) binds to loopback only and
+#      is never reachable from the public internet. Docker publishes ports straight into
+#      iptables and BYPASSES ufw, so loopback-binding — not the firewall — is what keeps
+#      them private. Only the reverse proxy below is public.
+#   3. Bakes PUBLIC_URL into the frontend build so the browser's fetch()/WebSocket target
+#      the proxy instead of the localhost:8000 dev fallback.
+#
+# The droplet .env must set: PUBLIC_URL, BIND_HOST=127.0.0.1, CORS_ORIGINS=<PUBLIC_URL>,
+# CONFIG_WRITE_TOKEN=<secret>. See docs/deploy/droplet.md and .env.example.
+
+services:
+  reverse-proxy:
+    image: caddy:2.8-alpine
+    container_name: reverse-proxy
+    depends_on:
+      - frontend
+      - backend
+    ports:
+      - "${HTTP_PORT:-80}:80"     # ACME HTTP challenge + 80→443 redirect
+      - "${HTTPS_PORT:-443}:443"  # public HTTPS (auto Let's Encrypt cert)
+    environment:
+      # PUBLIC_URL is Caddy's site address (https://<domain> → auto-TLS on 443).
+      - PUBLIC_URL=${PUBLIC_URL:?set PUBLIC_URL in the droplet .env, e.g. https://bd26-t2c.thatbackendguy.com}
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Persist issued certs + ACME account across restarts/rebuilds so we don't re-request
+      # certs (Let's Encrypt rate limits) every time the container recycles.
+      - caddy-data:/data
+      - caddy-config:/config
+    mem_limit: ${PROXY_MEM_LIMIT:-128m}
+    restart: unless-stopped
+    networks:
+      - radiation-net
+
+  # Bake the droplet's public origin into the static bundle so fetch()/WebSocket resolve
+  # to the reverse proxy (same-origin). Fails fast if PUBLIC_URL is unset — this override
+  # is droplet-only and must never fall back to the localhost:8000 dev value.
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ${PUBLIC_URL:?set PUBLIC_URL in the droplet .env, e.g. https://bd26-t2c.thatbackendguy.com}
+        # Same shared secret the backend gate checks (ADR-013), baked into the config form so its
+        # POST /config carries the X-Config-Token header. Reuses CONFIG_WRITE_TOKEN from the droplet .env.
+        VITE_CONFIG_WRITE_TOKEN: ${CONFIG_WRITE_TOKEN:-}
+    restart: unless-stopped
+
+  # Survive droplet reboots during the 24h soak.
+  backend:
+    restart: unless-stopped
+
+  # Aggregated-blob archive + its sink also stay up across reboots (ADR-018).
+  postgres:
+    restart: unless-stopped
+
+  aggregated-sink:
+    restart: unless-stopped
+
+volumes:
+  # Caddy's issued TLS certs + ACME account; persisted so container recycles don't re-issue.
+  caddy-data:
+  caddy-config:

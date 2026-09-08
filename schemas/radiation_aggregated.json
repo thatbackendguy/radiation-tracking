@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "radiation_aggregated",
+  "title": "RadiationAggregated",
+  "description": "Schema for geo/time windowed blobs on the radiation.aggregated Kafka topic. One record per geohash cell per event-time tumbling window, produced by the Flink GeoBucket aggregation.",
+  "type": "object",
+  "required": [
+    "geohash",
+    "precision",
+    "window_start",
+    "window_end",
+    "count",
+    "class_counts"
+  ],
+  "properties": {
+    "geohash": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Geohash of the aggregated cell (length equals precision)."
+    },
+    "precision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 12,
+      "description": "Geohash precision (characters) used to bucket events into this cell."
+    },
+    "window_start": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Inclusive start of the event-time tumbling window (based on captured_at)."
+    },
+    "window_end": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Exclusive end of the event-time tumbling window."
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of cleaned readings aggregated into this cell/window."
+    },
+    "cpm_avg": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Mean CPM across readings in the cell/window. Null if no non-null CPM readings."
+    },
+    "cpm_max": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Maximum CPM reading in the cell/window. Null if no non-null CPM readings."
+    },
+    "cpm_min": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Minimum CPM reading in the cell/window. Null if no non-null CPM readings."
+    },
+    "class_counts": {
+      "type": "object",
+      "description": "Count of readings per threshold classification within the cell/window.",
+      "required": ["SAFE", "WARN", "DANGER"],
+      "properties": {
+        "SAFE": { "type": "integer", "minimum": 0 },
+        "WARN": { "type": "integer", "minimum": 0 },
+        "DANGER": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "worst_classification": {
+      "type": ["string", "null"],
+      "enum": ["SAFE", "WARN", "DANGER", null],
+      "description": "Most severe classification seen in the cell/window (DANGER > WARN > SAFE). Null if no readings were classified."
+    },
+    "centroid_latitude": {
+      "type": ["number", "null"],
+      "minimum": -90,
+      "maximum": 90,
+      "description": "Mean latitude of readings in the cell/window (cell centroid)."
+    },
+    "centroid_longitude": {
+      "type": ["number", "null"],
+      "minimum": -180,
+      "maximum": 180,
+      "description": "Mean longitude of readings in the cell/window (cell centroid)."
+    },
+    "rolling_cpm_avg": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Smoothed mean cpm_avg over this window plus up to N prior event-time windows for this geohash cell (up to N+1 values; N = FLINK_ROLLING_WINDOWS, the prior-window baseline size). Null when this window carried no cpm_avg. Added by the Flink rolling-stats operator (M2). See docs/decisions/ADR-009."
+    },
+    "cpm_zscore": {
+      "type": ["number", "null"],
+      "description": "Standard deviations this window's cpm_avg sits from the cell's recent baseline (prior windows only). Null when the baseline is too small (< 2 windows) or flat, or this window carried no cpm_avg."
+    },
+    "anomaly": {
+      "type": "boolean",
+      "description": "Whether |cpm_zscore| crossed the configured z-score threshold (FLINK_ZSCORE_THRESHOLD, default 3.0) — a statistical spike/dip for this cell. False when no z-score could be computed."
+    }
+  },
+  "additionalProperties": false
+}

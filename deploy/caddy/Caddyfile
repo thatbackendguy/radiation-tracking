@@ -1,0 +1,23 @@
+# Reverse proxy + automatic HTTPS for the single Dockerized stack on the DO droplet.
+# Serves the React SPA and proxies the backend HTTP API + /ws/stream WebSocket on ONE
+# public origin, so the browser is same-origin (no CORS hop) and only this container is
+# exposed. Caddy fetches + renews a Let's Encrypt cert automatically when PUBLIC_URL is a
+# domain (https://…). See docker-compose.prod.yml and docs/deploy/droplet.md.
+
+# PUBLIC_URL doubles as Caddy's site address:
+#   https://bd26-t2c.thatbackendguy.com → auto-HTTPS on 443 + 80→443 redirect (domain deploy)
+#   http://<droplet-ip>             → plain HTTP, no cert (IP has no public cert — fallback)
+{$PUBLIC_URL} {
+	# Backend HTTP API + the live-updates WebSocket (Caddy upgrades WS transparently).
+	# /history/* are the archive insight endpoints (ADR-019).
+	@api path /health /metrics /config /recent /history/* /openapi.json /docs /redoc /ws/stream
+	reverse_proxy @api backend:8000
+
+	# Everything else: the SPA static bundle served by the frontend container.
+	reverse_proxy frontend:80
+
+	# Config posts are tiny; cap the body so the public endpoint can't be abused.
+	request_body {
+		max_size 1MB
+	}
+}

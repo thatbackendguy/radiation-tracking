@@ -1,0 +1,14 @@
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+pydantic==2.10.3
+pydantic-settings==2.6.1
+aiokafka==0.12.0
+# Same pin as data-provider/requirements.txt — keep the two in lockstep.
+prometheus-client==0.20.0
+# Read-only access to the aggregated-blob archive for /history (ADR-019). Async,
+# prebuilt wheels for macOS/Windows/linux-amd64 (cross-platform, H10).
+asyncpg==0.30.0
+
+# Testing
+pytest==8.3.4
+httpx==0.28.1

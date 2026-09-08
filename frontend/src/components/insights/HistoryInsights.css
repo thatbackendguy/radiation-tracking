@@ -1,0 +1,233 @@
+.insights {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.insights-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--panel-text-dim);
+  line-height: 1.45;
+}
+
+.insights-h {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--panel-text-dim);
+}
+
+.insights-span {
+  margin: 0;
+  font-size: 11px;
+  color: var(--panel-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Stat tiles (hero numbers, not a chart) ─────────────────────────────── */
+.stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 7px 9px;
+}
+
+.stat-value {
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--panel-text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.stat-label {
+  font-size: 10.5px;
+  color: var(--panel-text-dim);
+}
+
+.stat-tile-alert .stat-value {
+  color: var(--danger);
+}
+
+/* ── Trend chart ────────────────────────────────────────────────────────── */
+.trend-figure {
+  margin: 0;
+}
+
+.trend-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.trend-grid {
+  stroke: var(--panel-border);
+  stroke-width: 1;
+}
+
+.trend-axis {
+  fill: var(--panel-text-dim);
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.trend-band {
+  fill: var(--accent);
+  opacity: 0.14;
+  stroke: none;
+}
+
+.trend-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.trend-anomaly {
+  fill: var(--danger);
+  stroke: var(--panel-bg);
+  stroke-width: 1;
+}
+
+.trend-legend {
+  display: flex;
+  gap: 12px;
+  margin: 4px 0 0;
+  font-size: 10.5px;
+  color: var(--panel-text-dim);
+}
+
+.trend-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.swatch-line {
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+.swatch-band {
+  background: var(--accent);
+  opacity: 0.25;
+}
+
+.swatch-anomaly {
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+/* ── Hotspot bars ───────────────────────────────────────────────────────── */
+.hotspot-bars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hotspot-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 74px 1fr 34px;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  padding: 3px 2px;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  color: var(--panel-text);
+}
+
+.hotspot-row:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.hotspot-row:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.hotspot-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.hotspot-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.hotspot-label code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--panel-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hotspot-flag {
+  color: var(--warn);
+  font-size: 10px;
+}
+
+.hotspot-track {
+  position: relative;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.hotspot-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+}
+
+.hotspot-fill.band-safe {
+  background: var(--safe);
+}
+.hotspot-fill.band-warn {
+  background: var(--warn);
+}
+.hotspot-fill.band-danger {
+  background: var(--danger);
+}
+
+.hotspot-value {
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--panel-text);
+  text-align: right;
+}

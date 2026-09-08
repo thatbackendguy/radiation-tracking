@@ -1,0 +1,17 @@
+# Backend image build context (docker-compose builds ./backend).
+# Defense-in-depth for H4: the Dockerfile only COPYs requirements.txt and app/,
+# but a local .env with droplet values must never be able to enter the context
+# at all — secrets stay on the host and reach the container via compose env.
+
+.env
+.env.*
+!.env.example
+
+# Never useful inside the runtime image
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+tests/

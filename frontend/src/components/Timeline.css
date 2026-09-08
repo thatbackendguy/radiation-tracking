@@ -1,0 +1,98 @@
+/* Live timeline scrubber — full-width bar at the bottom of the map area. */
+.timeline {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 24px; /* clear Leaflet's bottom-right attribution */
+  z-index: 1000;
+  height: 72px;
+  box-sizing: border-box;
+  padding: 8px 12px 6px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: rgba(20, 22, 29, 0.9);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.timeline-empty {
+  align-items: center;
+  justify-content: center;
+  color: var(--panel-text-dim);
+  font-size: 12.5px;
+  height: 44px;
+}
+
+.timeline-track {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  cursor: crosshair;
+  touch-action: none;
+  border-radius: 4px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.timeline-bars {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  padding: 0 1px;
+}
+
+.timeline-bar {
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--accent);
+  opacity: 0.55;
+  border-radius: 1px 1px 0 0;
+  min-height: 1px;
+}
+
+.timeline-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(56, 189, 248, 0.22);
+  border-left: 2px solid var(--accent);
+  border-right: 2px solid var(--accent);
+  pointer-events: none;
+}
+
+.timeline-labels {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--panel-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-hint {
+  color: var(--panel-text-dim);
+  opacity: 0.8;
+}
+
+.timeline-clear {
+  background: var(--accent-dim);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.timeline-clear:hover {
+  filter: brightness(1.15);
+}

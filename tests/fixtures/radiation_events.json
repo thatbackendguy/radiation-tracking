@@ -1,0 +1,114 @@
+{
+  "valid": [
+    {
+      "sensor_id": "205",
+      "captured_at": "2026-05-29T01:58:49+00:00",
+      "uploaded_at": "2026-05-29T01:59:52+00:00",
+      "latitude": 52.4276,
+      "longitude": 4.9711,
+      "cpm": 21.0,
+      "unit": "cpm",
+      "classification": null,
+      "location_name": "Waterland, NL",
+      "height": null,
+      "surface": null,
+      "md5sum": "0d920b3e6a3457889a6fbe0148eb212c",
+      "loader_id": null
+    },
+    {
+      "sensor_id": "273997337",
+      "captured_at": "2026-05-29T01:59:33+00:00",
+      "uploaded_at": "2026-05-29T01:59:35+00:00",
+      "latitude": 32.7936,
+      "longitude": 35.0057,
+      "cpm": 66.0,
+      "unit": "cpm",
+      "classification": null,
+      "location_name": null,
+      "height": 100.0,
+      "surface": null,
+      "md5sum": "064f21e000d05bd87303b303b20ec79e",
+      "loader_id": null
+    },
+    {
+      "sensor_id": "204",
+      "captured_at": "2026-05-29T01:58:34+00:00",
+      "uploaded_at": "2026-05-29T01:59:34+00:00",
+      "latitude": 52.4494,
+      "longitude": 13.3127,
+      "cpm": null,
+      "unit": "cpm",
+      "classification": null,
+      "location_name": "Berlin, DE",
+      "height": null,
+      "surface": null,
+      "md5sum": "59191e4bd554bf95c27eb8a0615fd39e",
+      "loader_id": null
+    }
+  ],
+  "invalid": {
+    "missing_sensor_id": {
+      "captured_at": "2026-05-29T01:58:49+00:00",
+      "uploaded_at": "2026-05-29T01:59:52+00:00",
+      "latitude": 52.4276,
+      "longitude": 4.9711,
+      "cpm": 21.0,
+      "unit": "cpm"
+    },
+    "empty_sensor_id": {
+      "sensor_id": "",
+      "captured_at": "2026-05-29T01:58:49+00:00",
+      "uploaded_at": "2026-05-29T01:59:52+00:00",
+      "latitude": 52.4276,
+      "longitude": 4.9711,
+      "cpm": 21.0,
+      "unit": "cpm"
+    },
+    "missing_captured_at": {
+      "sensor_id": "205",
+      "uploaded_at": "2026-05-29T01:59:52+00:00",
+      "latitude": 52.4276,
+      "longitude": 4.9711,
+      "cpm": 21.0,
+      "unit": "cpm"
+    },
+    "missing_latitude": {
+      "sensor_id": "205",
+      "captured_at": "2026-05-29T01:58:49+00:00",
+      "uploaded_at": "2026-05-29T01:59:52+00:00",
+      "longitude": 4.9711,
+      "cpm": 21.0,
+      "unit": "cpm"
+    },
+    "cpm_negative": {
+      "sensor_id": "205",
+      "captured_at": "2026-05-29T01:58:49+00:00",
+      "uploaded_at": "2026-05-29T01:59:52+00:00",
+      "latitude": 52.4276,
+      "longitude": 4.9711,
+      "cpm": -1.0,
+      "unit": "cpm"
+    },
+    "cpm_over_max": {
+      "sensor_id": "205",
+      "captured_at": "2026-05-29T01:58:49+00:00",
+      "uploaded_at": "2026-05-29T01:59:52+00:00",
+      "latitude": 52.4276,
+      "longitude": 4.9711,
+      "cpm": 9999999.0,
+      "unit": "cpm"
+    },
+    "latitude_out_of_range": {
+      "sensor_id": "205",
+      "captured_at": "2026-05-29T01:58:49+00:00",
+      "uploaded_at": "2026-05-29T01:59:52+00:00",
+      "latitude": 200.0,
+      "longitude": 4.9711,
+      "cpm": 21.0,
+      "unit": "cpm"
+    },
+    "not_a_dict": "this is a string, not an event",
+    "null_event": null,
+    "empty_dict": {}
+  }
+}

@@ -1,0 +1,3 @@
+# Dependencies for scripts/provision_topics.py — pinned to match the backend's Kafka client
+# so all five members resolve the same build (cross-platform). See docs/cloud/kafka.md.
+aiokafka==0.12.0

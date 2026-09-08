@@ -1,0 +1,5 @@
+kafka-python==2.0.2
+prometheus-client==0.20.0
+# lz4 codec for the producer's default compression (ADR-012). Pure-wheel on
+# macOS/Windows/linux-amd64, so it does not break the cross-platform build.
+lz4==4.3.3

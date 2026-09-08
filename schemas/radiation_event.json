@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "radiation_event",
+  "title": "RadiationEvent",
+  "description": "Schema for events on radiation.raw and radiation.clean Kafka topics",
+  "type": "object",
+  "required": ["sensor_id", "captured_at", "uploaded_at", "latitude", "longitude"],
+  "properties": {
+    "sensor_id": {
+      "type": "string",
+      "description": "Unique identifier for the sensor/device (Device ID from Safecast CSV)",
+      "minLength": 1
+    },
+    "captured_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO8601 timestamp when the measurement was captured (event time)"
+    },
+    "uploaded_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO8601 timestamp when the measurement was uploaded to Safecast (processing time, used for ordering)"
+    },
+    "latitude": {
+      "type": "number",
+      "minimum": -90,
+      "maximum": 90,
+      "description": "GPS latitude of the measurement"
+    },
+    "longitude": {
+      "type": "number",
+      "minimum": -180,
+      "maximum": 180,
+      "description": "GPS longitude of the measurement"
+    },
+    "cpm": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "Counts per minute radiation measurement. Null if sensor malfunction or missing."
+    },
+    "unit": {
+      "type": "string",
+      "enum": ["cpm", "mSv/h", "uSv/h"],
+      "description": "Unit of the radiation measurement"
+    },
+    "classification": {
+      "type": ["string", "null"],
+      "enum": ["SAFE", "WARN", "DANGER", null],
+      "description": "Threshold classification assigned by Flink. Null on radiation.raw, populated on radiation.clean."
+    },
+    "sensor_type": {
+      "type": ["string", "null"],
+      "enum": ["mobile", "fixed", null],
+      "description": "Producer mobility heuristic: 'fixed' if the sensor's readings stay within a small radius, 'mobile' once they range beyond it. Null if not yet determined. See ADR-011."
+    },
+    "location_name": {
+      "type": ["string", "null"],
+      "description": "Human-readable location name, if available"
+    },
+    "height": {
+      "type": ["number", "null"],
+      "description": "Height of the sensor above ground in metres, if available"
+    },
+    "surface": {
+      "type": ["string", "null"],
+      "description": "Surface type descriptor, if available"
+    },
+    "md5sum": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{32}$",
+      "description": "MD5 checksum of the original CSV row for deduplication"
+    },
+    "loader_id": {
+      "type": ["string", "null"],
+      "description": "Safecast loader identifier, if available"
+    }
+  },
+  "additionalProperties": false
+}

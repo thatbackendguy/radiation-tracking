@@ -1,0 +1,174 @@
+# CI pipeline — Topic C: Radiation Tracking
+#
+# stages:
+#   lint     — formatting/static checks (black, ruff, eslint)
+#   test     — pytest suites for every module + frontend build (the merge gate, §9.4)
+#   publish  — push tagged Docker images
+#
+# Each job is path-scoped via `rules: changes` so unrelated MRs stay fast; every
+# job also re-runs when .gitlab-ci.yml itself changes, so editing the pipeline
+# validates the whole project in one go.
+
+stages:
+  - lint
+  - test
+  - publish
+
+# ---------------------------------------------------------------------------
+# Lint
+# ---------------------------------------------------------------------------
+
+flink-lint:
+  stage: lint
+  image: python:3.11-slim
+  before_script:
+    - pip install black==24.4.2 ruff==0.4.4 --quiet
+  script:
+    - black --check flink-jobs/
+    - ruff check flink-jobs/
+  rules:
+    - changes:
+        - flink-jobs/**/*
+        - .gitlab-ci.yml
+
+frontend-lint:
+  stage: lint
+  image: node:22-alpine
+  script:
+    - cd frontend
+    - npm ci
+    - npm run lint
+  rules:
+    - changes:
+        - frontend/**/*
+        - .gitlab-ci.yml
+
+# ---------------------------------------------------------------------------
+# Test — one pytest job per module (guidelines §9). All must pass to merge.
+# ---------------------------------------------------------------------------
+
+test-shared-validator:
+  stage: test
+  image: python:3.11-slim
+  before_script:
+    - pip install --quiet pytest jsonschema
+  script:
+    # Root tests/ cover shared/validator/schema_validator.py (null/range discard logic)
+    # and the pure helpers of scripts/ (topic provisioner caps, failure-demo parsing).
+    - pytest tests/ -q
+  rules:
+    - changes:
+        - tests/**/*
+        - shared/**/*
+        - schemas/**/*
+        - scripts/**/*
+        - .gitlab-ci.yml
+
+test-backend:
+  stage: test
+  image: python:3.11-slim
+  before_script:
+    - pip install --quiet -r backend/requirements.txt
+  script:
+    # conftest stubs Kafka, so endpoint/consumer/ring-buffer tests are hermetic.
+    - cd backend
+    - pytest -q
+  rules:
+    - changes:
+        - backend/**/*
+        - .gitlab-ci.yml
+
+test-data-provider:
+  stage: test
+  image: python:3.11-slim
+  before_script:
+    - pip install --quiet -r data-provider/requirements.txt pytest
+  script:
+    # Unit tests only; the Testcontainers integration suite runs in its own job.
+    - pytest data-provider/tests -m "not integration" -q
+  rules:
+    - changes:
+        - data-provider/**/*
+        - data/sample.csv
+        - .gitlab-ci.yml
+
+test-flink-jobs:
+  stage: test
+  image: python:3.11-slim
+  before_script:
+    # Operators import a FilterFunction stub when PyFlink is absent, so the unit
+    # suite needs only pytest + pygeohash — no heavyweight apache-flink install.
+    - pip install --quiet pytest pygeohash==1.2.0
+  script:
+    - cd flink-jobs
+    - pytest tests/ -q
+  rules:
+    - changes:
+        - flink-jobs/**/*
+        - .gitlab-ci.yml
+
+# Testcontainers Kafka integration suite (§9.1). Needs Docker-in-Docker on the
+# runner. Included so the end-to-end producer→Kafka contract is exercised in CI,
+# but kept non-blocking until the shared runner's dind networking is confirmed —
+# flip allow_failure to false once it is green.
+test-data-provider-integration:
+  stage: test
+  image: python:3.11-slim
+  services:
+    - docker:24.0.5-dind
+  variables:
+    DOCKER_HOST: "tcp://docker:2375"
+    DOCKER_TLS_CERTDIR: ""
+    TESTCONTAINERS_RYUK_DISABLED: "true"
+    TESTCONTAINERS_HOST_OVERRIDE: "docker"
+  before_script:
+    - pip install --quiet -r data-provider/requirements.txt -r data-provider/requirements-dev.txt
+  script:
+    - pytest data-provider/tests -m integration -q
+  allow_failure: true
+  rules:
+    - changes:
+        - data-provider/**/*
+        - .gitlab-ci.yml
+
+# Build the Vite app to catch broken imports/types.
+frontend-build:
+  stage: test
+  image: node:22-alpine
+  script:
+    - cd frontend
+    - npm ci
+    - npm run build
+  rules:
+    - changes:
+        - frontend/**/*
+        - .gitlab-ci.yml
+
+frontend-test:
+  stage: test
+  image: node:22-alpine
+  script:
+    - cd frontend
+    - npm ci
+    - npm run test
+  rules:
+    - changes:
+        - frontend/**/*
+        - .gitlab-ci.yml
+
+# ---------------------------------------------------------------------------
+# Publish
+# ---------------------------------------------------------------------------
+
+publish-data-provider:
+  stage: publish
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  script:
+    - cd data-provider
+    - docker login -u "$DOCKER_HUB_USER" -p "$DOCKER_HUB_PASSWORD"
+    - docker build -t "$DOCKER_HUB_USER/m1-producer:$CI_COMMIT_TAG" .
+    - docker push "$DOCKER_HUB_USER/m1-producer:$CI_COMMIT_TAG"
+  rules:
+    - if: $CI_COMMIT_TAG

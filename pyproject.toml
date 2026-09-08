@@ -1,0 +1,12 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "integration: end-to-end tests requiring a running Docker daemon (Testcontainers Kafka). Skip with -m \"not integration\".",
+]
+
+[tool.black]
+line-length = 100
+
+[tool.ruff]
+line-length = 100

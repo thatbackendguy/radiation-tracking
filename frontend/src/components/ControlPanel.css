@@ -1,0 +1,342 @@
+/* REMAP-style side panel: fixed-width column in the app-body flex row that
+   collapses to zero width; the map re-measures itself after the transition. */
+
+.control-panel {
+  flex: 0 0 var(--panel-width);
+  width: var(--panel-width);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-bg);
+  border-right: 1px solid var(--panel-border);
+  overflow: hidden;
+  transition: flex-basis 0.25s ease, width 0.25s ease;
+}
+
+.control-panel.closed {
+  flex-basis: 0;
+  width: 0;
+  border-right: none;
+}
+
+.panel-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-width: var(--panel-width);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-sizing: border-box;
+}
+
+/* ── Sections ───────────────────────────────────────────────────────────── */
+
+.panel-section {
+  flex: 0 0 auto;
+  background: var(--panel-bg-raised);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.section-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  color: var(--panel-text);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.section-header:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.section-title {
+  flex: 1 1 auto;
+}
+
+.section-badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.chevron {
+  color: var(--panel-text-dim);
+  transition: transform 0.2s ease;
+  transform: rotate(-90deg);
+}
+
+.chevron.open {
+  transform: rotate(0deg);
+}
+
+.section-body {
+  padding: 4px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Collapsed sections stay mounted so form state and element ids survive. */
+.section-body.collapsed {
+  display: none;
+}
+
+.section-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--panel-text-dim);
+  line-height: 1.45;
+}
+
+.section-warning {
+  color: var(--warn);
+}
+
+/* ── Field blocks ───────────────────────────────────────────────────────── */
+
+.field-block {
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 8px 10px 10px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field-block > legend {
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--panel-text-dim);
+  padding: 0 4px;
+}
+
+.control-panel label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--panel-text);
+}
+
+.control-panel input[type='number'],
+.control-panel input[type='datetime-local'],
+.control-panel select {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  color: var(--panel-text);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12.5px;
+  font-family: inherit;
+  color-scheme: dark;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.control-panel input[type='number'] {
+  width: 80px;
+}
+
+.control-panel input[type='datetime-local'] {
+  flex: 1 1 auto;
+}
+
+.control-panel input:focus-visible,
+.control-panel select:focus-visible,
+.control-panel button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.inline-fields {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+
+.inline-fields label {
+  flex: 1 1 0;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.inline-fields input {
+  width: 100%;
+}
+
+/* ── Buttons & chips ────────────────────────────────────────────────────── */
+
+.ghost-btn {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  color: var(--panel-text-dim);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.ghost-btn:hover {
+  color: var(--panel-text);
+  border-color: var(--accent);
+}
+
+/* ── Alert Logs ─────────────────────────────────────────────────────────── */
+
+.alert-logs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.alert-log-row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid var(--panel-border);
+  border-left: 3px solid var(--danger);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font: inherit;
+  color: var(--panel-text);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.alert-log-row:hover {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+.alert-log-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.alert-log-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.alert-log-sensor {
+  font-weight: 600;
+  font-size: 12.5px;
+}
+
+.alert-log-cpm {
+  font-size: 12px;
+  color: var(--danger);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.alert-log-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--panel-text-dim);
+}
+
+.alert-log-time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── Layers ─────────────────────────────────────────────────────────────── */
+
+.layer-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.layer-toggles label {
+  justify-content: flex-start;
+  cursor: pointer;
+}
+
+.layer-toggles input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+.cadence-row select {
+  min-width: 110px;
+}
+
+/* ── Admin form ─────────────────────────────────────────────────────────── */
+
+.threshold-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.threshold-form button[type='submit'] {
+  align-self: flex-start;
+  background: var(--accent);
+  color: #0b1220;
+  border: none;
+  padding: 7px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  transition: filter 0.15s;
+}
+
+.threshold-form button[type='submit']:hover {
+  filter: brightness(1.15);
+}
+
+/* ── Footer disclaimer ──────────────────────────────────────────────────── */
+
+.panel-footer {
+  flex: 0 0 auto;
+  min-width: var(--panel-width);
+  box-sizing: border-box;
+  padding: 10px 14px;
+  border-top: 1px solid var(--panel-border);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--panel-text-dim);
+}

@@ -1,0 +1,49 @@
+/* Floating basemap radio card — top-right of the map area, under the topbar. */
+.basemap-picker {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1000;
+  margin: 0;
+  padding: 8px 10px 6px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: rgba(20, 22, 29, 0.9);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 150px;
+}
+
+.basemap-picker-title {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--panel-text-dim);
+  padding: 0 0 2px;
+}
+
+.basemap-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--panel-text);
+  cursor: pointer;
+  padding: 2px 2px;
+  border-radius: 5px;
+}
+
+.basemap-option:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.basemap-option input[type='radio'] {
+  accent-color: var(--accent);
+  margin: 0;
+  cursor: pointer;
+}

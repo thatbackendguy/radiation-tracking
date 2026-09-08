@@ -1,0 +1,284 @@
+services:
+  kafka:
+    image: apache/kafka:3.8.1
+    container_name: kafka
+    ports:
+      # External listener for host-side tools (e.g. local producer / kafka CLI).
+      # BIND_HOST defaults to 0.0.0.0 (reachable — local dev). The droplet .env sets
+      # BIND_HOST=127.0.0.1 so this PLAINTEXT no-auth listener is loopback-only and
+      # never public (Docker published ports bypass ufw — see docker-compose.prod.yml).
+      - "${BIND_HOST:-0.0.0.0}:29092:29092"
+    environment:
+      - KAFKA_NODE_ID=1
+      - KAFKA_PROCESS_ROLES=broker,controller
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - CLUSTER_ID=MkU3OEVBNTcwNTJENDM2Qk
+      # Prod-ready caps for the single DO droplet (160 GB disk / 8 GB RAM). Retention is
+      # bounded by both size (per partition) and time so the radiation.* logs can never
+      # grow unbounded and fill the droplet disk; env-overridable for local vs droplet.
+      - KAFKA_LOG_RETENTION_BYTES=${KAFKA_LOG_RETENTION_BYTES:-1073741824}
+      - KAFKA_LOG_RETENTION_MS=${KAFKA_LOG_RETENTION_MS:-86400000}
+      # Cap the JVM heap so Kafka leaves room for Flink JM+TM + backend on the 8 GB box.
+      - KAFKA_HEAP_OPTS=${KAFKA_HEAP_OPTS:--Xmx1g -Xms1g}
+    # Container memory ceiling (heap + page cache/off-heap headroom) so a runaway broker
+    # can't OOM the whole droplet; keep above KAFKA_HEAP_OPTS -Xmx.
+    mem_limit: ${KAFKA_MEM_LIMIT:-1536m}
+    healthcheck:
+      # Broker is "healthy" only once it accepts client API requests, so
+      # dependents (e.g. data-provider) don't start against a not-yet-ready broker.
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+    networks:
+      - radiation-net
+
+  # JobManager / TaskManager run the project image (flink-jobs/Dockerfile) rather than
+  # the bare flink image so PyFlink, the Kafka connector jar, and the operator modules
+  # are present on the cluster that actually executes the job. parallelism.default: 1
+  # keeps event-time windows firing for the demo's sparse per-cell rate.
+  flink-jobmanager:
+    build: ./flink-jobs
+    image: bd26-flink-job:latest
+    container_name: flink-jm
+    ports:
+      # Flink UI + REST — accepts arbitrary job submission, so keep it off the public
+      # interface on the droplet (BIND_HOST=127.0.0.1); reachable via the proxy/SSH tunnel.
+      - "${BIND_HOST:-0.0.0.0}:8081:8081"
+    command: jobmanager
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        parallelism.default: 1
+        jobmanager.memory.process.size: ${FLINK_JM_PROCESS_SIZE:-1024m}
+        state.savepoints.dir: ${FLINK_SAVEPOINT_DIR:-file:///opt/flink/state/savepoints}
+    # Cap JM heap + container memory so Kafka(1.5g)+JM+TM+backend fit the 8 GB DO droplet;
+    # restart so the session cluster survives a droplet reboot during the 24h soak.
+    mem_limit: ${FLINK_JM_MEM_LIMIT:-1280m}
+    restart: unless-stopped
+    # Shared checkpoint/savepoint storage — JM and TM mount the same volume so file://
+    # state paths resolve cluster-wide on the single droplet.
+    volumes:
+      - flink-state:/opt/flink/state
+    networks:
+      - radiation-net
+
+  flink-taskmanager:
+    build: ./flink-jobs
+    image: bd26-flink-job:latest
+    container_name: flink-tm
+    depends_on:
+      - flink-jobmanager
+    command: taskmanager
+    environment:
+      # operator modules live in the image WORKDIR; the Python worker imports them from here
+      - PYTHONPATH=/opt/flink/jobs
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 2
+        taskmanager.memory.process.size: ${FLINK_TM_PROCESS_SIZE:-2048m}
+        state.savepoints.dir: ${FLINK_SAVEPOINT_DIR:-file:///opt/flink/state/savepoints}
+    # TM holds the keyed state (dedup + per-geohash rolling series) — the largest Flink
+    # slice on the droplet; restart so state recovers from the last checkpoint on reboot.
+    mem_limit: ${FLINK_TM_MEM_LIMIT:-2560m}
+    restart: unless-stopped
+    volumes:
+      - flink-state:/opt/flink/state
+    networks:
+      - radiation-net
+
+  # One-shot submitter: waits for the JobManager REST API, then submits the radiation
+  # tracking job to the session cluster and exits (the job keeps running on the cluster).
+  # This is what makes `docker compose up` run the full pipeline end-to-end.
+  flink-job:
+    build: ./flink-jobs
+    image: bd26-flink-job:latest
+    container_name: flink-job
+    depends_on:
+      kafka:
+        condition: service_healthy
+      # the Backend creates the radiation.* / config.updates topics on startup; without it
+      # the job's config.updates KafkaSource restart-loops on UnknownTopicOrPartition.
+      # service_healthy (the backend image HEALTHCHECK hits /health, which is only served
+      # after lifespan topic creation) makes that ordering guaranteed, not best-effort.
+      backend:
+        condition: service_healthy
+      flink-jobmanager:
+        condition: service_started
+      flink-taskmanager:
+        condition: service_started
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - PYTHONPATH=/opt/flink/jobs
+      # Durable checkpointing on the droplet: set these in the droplet .env to write
+      # RocksDB-backed checkpoints to the shared flink-state volume. Empty locally →
+      # unchanged 60s in-memory checkpoints (the job code skips the storage dir when unset).
+      - FLINK_CHECKPOINT_DIR=${FLINK_CHECKPOINT_DIR:-}
+      - FLINK_STATE_BACKEND=${FLINK_STATE_BACKEND:-}
+    command:
+      - bash
+      - -c
+      - >
+        until curl -sf http://flink-jobmanager:8081/overview >/dev/null 2>&1; do
+          echo 'waiting for jobmanager REST...'; sleep 3;
+        done;
+        echo 'submitting Radiation Tracking Flink Job';
+        flink run -d -Drest.address=flink-jobmanager -Drest.port=8081 -pym radiation_tracking_job
+    restart: "no"
+    networks:
+      - radiation-net
+
+  data-provider:
+    build: ./data-provider
+    container_name: data-provider
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_TOPIC=radiation.raw
+      - CSV_PATH=/data/dataset.csv
+      - PRODUCER_SPEED=${PRODUCER_SPEED:-100}
+      # Producer throughput tuning (ADR-012 / docs/perf/producer-load-test.md).
+      - KAFKA_BATCH_SIZE=${KAFKA_BATCH_SIZE:-65536}
+      - KAFKA_LINGER_MS=${KAFKA_LINGER_MS:-20}
+      - KAFKA_COMPRESSION_TYPE=${KAFKA_COMPRESSION_TYPE:-lz4}
+      - METRICS_PORT=8001
+      - LOG_LEVEL=INFO
+    volumes:
+      # Bind-mount the dataset read-only: it stays on the host and is never copied into the image
+      # (so the ~29 GB full dataset is fine). Override CSV_FILE to point at any host CSV.
+      - ${CSV_FILE:-./data/sample.csv}:/data/dataset.csv:ro
+    ports:
+      # Prometheus producer metrics — http://localhost:8001/metrics
+      - "${BIND_HOST:-0.0.0.0}:${METRICS_PORT:-8001}:8001"
+    networks:
+      - radiation-net
+
+  backend:
+    build: ./backend
+    container_name: backend
+    ports:
+      # On the droplet the browser reaches the backend through the reverse proxy, so this
+      # direct mapping is loopback-only there (BIND_HOST=127.0.0.1).
+      - "${BIND_HOST:-0.0.0.0}:8000:8000"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      # Not service_healthy: the archive is optional (degraded-safe), so the backend
+      # must start even if Postgres is slow/absent — /history just returns 503 then.
+      postgres:
+        condition: service_started
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      # CORS + /ws/stream origin allowlist (comma-separated). `*` for local dev;
+      # the droplet .env restricts it to the public frontend URL.
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      # Shared token gating POST /config writes (ADR-013). Empty for local dev
+      # (gate off); set in the droplet .env so config rewrites need X-Config-Token.
+      - CONFIG_WRITE_TOKEN=${CONFIG_WRITE_TOKEN:-}
+      # Read-only access to the aggregated-blob archive for /history (ADR-019).
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-radiation}
+      - POSTGRES_USER=${POSTGRES_USER:-radiation}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-radiation}
+    # Container memory ceiling so a runaway backend can't OOM the 8 GB droplet;
+    # a thin asyncio app with bounded buffers — 512m leaves ample headroom.
+    mem_limit: ${BACKEND_MEM_LIMIT:-512m}
+    networks:
+      - radiation-net
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Finding (d): without this arg every compose build baked the
+        # http://localhost:8000 fallback into the bundle. Empty keeps that
+        # fallback for local dev; set VITE_API_BASE_URL in .env when the
+        # browser is not on this machine (the prod override bakes PUBLIC_URL).
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+    container_name: frontend-service
+    ports:
+      # Local dev serves the SPA here; on the droplet the reverse proxy serves it on :80,
+      # so this stays loopback-only there (BIND_HOST=127.0.0.1).
+      - "${BIND_HOST:-0.0.0.0}:5173:80"
+    depends_on:
+      - backend
+    networks:
+      - radiation-net
+
+  # Persistent historical archive of the aggregated blobs (ADR-018). Multi-arch image,
+  # so it runs natively on arm64 macs and the amd64 droplet (no platform pin needed).
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-radiation}
+      - POSTGRES_USER=${POSTGRES_USER:-radiation}
+      # Dev default; the droplet .env MUST override this (see .env.example).
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-radiation}
+    ports:
+      # Host-published on 5433 by default to dodge a local Postgres already on 5432;
+      # the container still listens on 5432 internally. Loopback-only on the droplet
+      # (BIND_HOST=127.0.0.1). Handy for `psql -h localhost -p 5433`.
+      - "${BIND_HOST:-0.0.0.0}:${POSTGRES_HOST_PORT:-5433}:5432"
+    healthcheck:
+      # Dependents wait until Postgres actually accepts connections.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-radiation} -d ${POSTGRES_DB:-radiation}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    mem_limit: ${POSTGRES_MEM_LIMIT:-384m}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - radiation-net
+
+  # Consumes radiation.aggregated and idempotently upserts each blob into Postgres.
+  # Off the real-time path — the backend WebSocket fan-out is unaffected (ADR-018).
+  aggregated-sink:
+    build: ./aggregated_sink
+    container_name: aggregated-sink
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - AGG_SINK_TOPIC=radiation.aggregated
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-radiation}
+      - POSTGRES_USER=${POSTGRES_USER:-radiation}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-radiation}
+      - AGG_SINK_BATCH_SIZE=${AGG_SINK_BATCH_SIZE:-200}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    mem_limit: ${AGG_SINK_MEM_LIMIT:-192m}
+    networks:
+      - radiation-net
+
+networks:
+  radiation-net:
+    driver: bridge
+
+volumes:
+  # Shared Flink checkpoint/savepoint state for the session cluster (JM + TM). On the DO
+  # droplet this persists keyed state (dedup, per-geohash rolling series) across restarts.
+  flink-state:
+  # Postgres data dir — the aggregated-blob archive survives restarts (ADR-018).
+  pgdata:

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "data-provider"
+version = "0.1.0"
+requires-python = ">=3.9"
+dependencies = [
+    "kafka-python==2.0.2",
+    "prometheus-client==0.20.0",
+    "lz4==4.3.3",
+]
+
+[project.scripts]
+data-provider = "data_provider.__main__:main"
+
+[tool.setuptools]
+packages = ["data_provider"]
+
+[tool.setuptools.package-dir]
+"data_provider" = "."

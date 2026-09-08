@@ -1,0 +1,25 @@
+# Keeps the build context small when building from the repo root — notably
+# data-provider/Dockerfile.cloud, whose context is the whole repo so it can
+# bake in data/sample.csv. Service images that build from their own subdir
+# (./data-provider, ./backend, ./frontend) are unaffected.
+
+.git
+.venv
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.pytest_cache/
+**/.mypy_ruff_cache/
+**/.ruff_cache/
+*.egg-info
+
+# Frontend build artifacts / deps
+node_modules
+**/node_modules/
+frontend/dist
+
+# The full 29 GB Safecast dataset must never enter a build context (H3).
+# data/sample.csv is deliberately kept — the cloud image bakes it in.
+measurements-out.csv
+data/*.csv
+!data/sample.csv

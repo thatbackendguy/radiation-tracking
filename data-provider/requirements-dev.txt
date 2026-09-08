@@ -1,0 +1,7 @@
+# Test-only dependencies for the Data Provider.
+# Kept out of requirements.txt so the runtime Docker image stays lean.
+#   pip install -r requirements.txt -r requirements-dev.txt
+-r requirements.txt
+
+pytest==7.1.2
+testcontainers[kafka]>=4.0,<5

@@ -1,0 +1,1304 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Radiation Tracking Backend",
+    "description": "Backend service for the TUHH Big Data radiation tracking project (Topic C).\n\nConsumes the processed Kafka streams (`radiation.clean`, `radiation.alerts`,\n`radiation.aggregated`), serves them to the map frontend, and publishes the\nglobal pipeline thresholds back to Flink via the `config.updates` topic.\nArea/timespan filtering is **per client** on the read path (ADR-017): `/recent`\nquery params and the `/ws/stream` subscribe message below \u2014 one client's\nfilters never affect another client or the pipeline.\n\n## WebSocket: `/ws/stream`\n\nLive push of processed events (not part of the OpenAPI paths below \u2014 WebSockets\nare outside the spec):\n\n* **Origin policy** \u2014 auth-less but origin-checked: a browser `Origin` header\n  must be in the `CORS_ORIGINS` allowlist (`*` allows all; a missing header \u2014\n  curl, tests \u2014 is allowed). Disallowed origins are closed with code `1008`\n  before the upgrade.\n* **On connect** the client receives a catch-up snapshot of recent\n  `radiation.clean` events, then the live stream.\n* **Message envelope** \u2014 every frame is\n  `{\"type\": \"clean\" | \"alert\" | \"aggregated\", \"data\": {...}}`; for `clean`,\n  `data` is a `RadiationEvent`. One socket multiplexes all three streams.\n* **Per-client view filter (ADR-017)** \u2014 the client may send\n  `{\"type\": \"subscribe\", \"area\": {\"min_lat\", \"max_lat\", \"min_lon\", \"max_lon\"},\n  \"timespan\": {\"start\", \"end\"}}` at any time; both parts optional, nulls widen\n  the view back. Only this connection's live stream is narrowed (the catch-up\n  snapshot is unfiltered \u2014 clients filter it locally). Malformed subscribe\n  frames are ignored and the previous filter kept.\n* **Backpressure** \u2014 per client, `clean`/`aggregated` state coalesces\n  latest-wins per key; `alert` frames are FIFO and never coalesced, and each\n  flush delivers alerts first.\n",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Liveness + per-component status",
+        "description": "Always HTTP 200 while the app is serving (the image HEALTHCHECK and the compose `service_healthy` gate depend on it); a Kafka component that could not reach the broker is reported as `degraded` in the body.",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "metrics"
+        ],
+        "summary": "Prometheus metrics (text exposition)",
+        "operationId": "metrics_metrics_get",
+        "responses": {
+          "200": {
+            "description": "Prometheus text format.",
+            "content": {
+              "text/plain": {}
+            }
+          }
+        }
+      }
+    },
+    "/config": {
+      "get": {
+        "tags": [
+          "config"
+        ],
+        "summary": "Read the active filter settings",
+        "operationId": "get_config_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "config"
+        ],
+        "summary": "Update filter settings and publish them to Flink",
+        "description": "Merges the partial payload onto the active config, validates the merged state, and publishes the **full merged** settings to the `config.updates` Kafka topic (Flink broadcast state). The change is visible on the map within seconds. Publish-before-commit: on broker failure nothing changes. On the droplet this write is gated by an `X-Config-Token` header when `CONFIG_WRITE_TOKEN` is set (no-op locally).",
+        "operationId": "update_config_config_post",
+        "parameters": [
+          {
+            "name": "x-config-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Config-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigPayload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigUpdateResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`X-Config-Token` header required (droplet: token configured)."
+          },
+          "403": {
+            "description": "`X-Config-Token` did not match the configured write token."
+          },
+          "422": {
+            "description": "Validation failed \u2014 thresholds must satisfy warn < danger (also re-checked on the merged state), lat/lon ranges need min < max, and a timespan needs start < end."
+          },
+          "503": {
+            "description": "`config.updates` topic unavailable \u2014 the settings were NOT committed; backend and Flink still agree on the previous state."
+          }
+        }
+      }
+    },
+    "/recent": {
+      "get": {
+        "tags": [
+          "recent"
+        ],
+        "summary": "Newest buffered clean events (cursor-paginated, per-client filters)",
+        "description": "Returns the newest `radiation.clean` events from the in-memory ring buffer for seeding the map. Paging walks backwards through the buffered window via the opaque `next_cursor`; events evicted from the buffer before a client pages back to them are gone (best-effort by design). `limit` is clamped, never rejected, so the map always gets a usable response. The optional bounding-box (`min_lat`/`max_lat`/`min_lon`/`max_lon`, all-or-none) and time-range (`start`/`end`, both-or-none) parameters are **per-client view filters** (ADR-017): they narrow only this response, never the pipeline or other clients.",
+        "operationId": "get_recent_recent_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Max events to return",
+              "title": "Limit"
+            },
+            "description": "Max events to return"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque cursor from a previous response's next_cursor. Returns events older than the cursor; omit it for the newest page. Paging is bounded to the in-memory window.",
+              "title": "Cursor"
+            },
+            "description": "Opaque cursor from a previous response's next_cursor. Returns events older than the cursor; omit it for the newest page. Paging is bounded to the in-memory window."
+          },
+          {
+            "name": "min_lat",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "maximum": 90.0,
+                  "minimum": -90.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Lat"
+            }
+          },
+          {
+            "name": "max_lat",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "maximum": 90.0,
+                  "minimum": -90.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Lat"
+            }
+          },
+          {
+            "name": "min_lon",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "maximum": 180.0,
+                  "minimum": -180.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Lon"
+            }
+          },
+          {
+            "name": "max_lon",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "maximum": 180.0,
+                  "minimum": -180.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Lon"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO-8601 lower bound on captured_at (per-client)",
+              "title": "Start"
+            },
+            "description": "ISO-8601 lower bound on captured_at (per-client)"
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO-8601 upper bound on captured_at (per-client)",
+              "title": "End"
+            },
+            "description": "ISO-8601 upper bound on captured_at (per-client)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid view filter \u2014 the bounding box needs all four bounds with min < max, and a time range needs start < end."
+          }
+        }
+      }
+    },
+    "/history/summary": {
+      "get": {
+        "tags": [
+          "history"
+        ],
+        "summary": "Archive-wide totals",
+        "operationId": "get_summary_history_summary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/history/timeseries": {
+      "get": {
+        "tags": [
+          "history"
+        ],
+        "summary": "Per-window CPM time-series (count-weighted) for the trend chart",
+        "operationId": "get_timeseries_history_timeseries_get",
+        "parameters": [
+          {
+            "name": "min_lat",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "maximum": 90.0,
+                  "minimum": -90.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Lat"
+            }
+          },
+          {
+            "name": "max_lat",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "maximum": 90.0,
+                  "minimum": -90.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Lat"
+            }
+          },
+          {
+            "name": "min_lon",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "maximum": 180.0,
+                  "minimum": -180.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Lon"
+            }
+          },
+          {
+            "name": "max_lon",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "maximum": 180.0,
+                  "minimum": -180.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Lon"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TimeseriesPoint"
+                  },
+                  "title": "Response Get Timeseries History Timeseries Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/history/hotspots": {
+      "get": {
+        "tags": [
+          "history"
+        ],
+        "summary": "Top geohash cells by peak CPM over the range",
+        "operationId": "get_hotspots_history_hotspots_get",
+        "parameters": [
+          {
+            "name": "min_lat",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "maximum": 90.0,
+                  "minimum": -90.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Lat"
+            }
+          },
+          {
+            "name": "max_lat",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "maximum": 90.0,
+                  "minimum": -90.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Lat"
+            }
+          },
+          {
+            "name": "min_lon",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "maximum": 180.0,
+                  "minimum": -180.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Lon"
+            }
+          },
+          {
+            "name": "max_lon",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "maximum": 180.0,
+                  "minimum": -180.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Lon"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Hotspot"
+                  },
+                  "title": "Response Get Hotspots History Hotspots Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AreaFilter": {
+        "properties": {
+          "min_lat": {
+            "type": "number",
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Min Lat",
+            "examples": [
+              34.0
+            ]
+          },
+          "max_lat": {
+            "type": "number",
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Max Lat",
+            "examples": [
+              38.5
+            ]
+          },
+          "min_lon": {
+            "type": "number",
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Min Lon",
+            "examples": [
+              138.0
+            ]
+          },
+          "max_lon": {
+            "type": "number",
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Max Lon",
+            "examples": [
+              142.0
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "min_lat",
+          "max_lat",
+          "min_lon",
+          "max_lon"
+        ],
+        "title": "AreaFilter"
+      },
+      "ConfigPayload": {
+        "properties": {
+          "cpm_warn_threshold": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cpm Warn Threshold",
+            "examples": [
+              100.0
+            ]
+          },
+          "cpm_danger_threshold": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cpm Danger Threshold",
+            "examples": [
+              1000.0
+            ]
+          },
+          "area": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AreaFilter"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timespan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TimespanFilter-Input"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ConfigPayload",
+        "description": "Partial update \u2014 omitted fields keep their current value."
+      },
+      "ConfigResponse": {
+        "properties": {
+          "cpm_warn_threshold": {
+            "type": "number",
+            "title": "Cpm Warn Threshold"
+          },
+          "cpm_danger_threshold": {
+            "type": "number",
+            "title": "Cpm Danger Threshold"
+          },
+          "area": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AreaFilter"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timespan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TimespanFilter-Output"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "cpm_warn_threshold",
+          "cpm_danger_threshold"
+        ],
+        "title": "ConfigResponse"
+      },
+      "ConfigUpdateResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "config": {
+            "$ref": "#/components/schemas/ConfigResponse"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "config"
+        ],
+        "title": "ConfigUpdateResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded"
+            ],
+            "title": "Status"
+          },
+          "service": {
+            "type": "string",
+            "title": "Service"
+          },
+          "kafka_consumer": {
+            "type": "string",
+            "enum": [
+              "running",
+              "available",
+              "degraded",
+              "disabled",
+              "stopped"
+            ],
+            "title": "Kafka Consumer"
+          },
+          "config_producer": {
+            "type": "string",
+            "enum": [
+              "running",
+              "available",
+              "degraded",
+              "disabled",
+              "stopped"
+            ],
+            "title": "Config Producer"
+          },
+          "ws_clients": {
+            "type": "integer",
+            "title": "Ws Clients"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "service",
+          "kafka_consumer",
+          "config_producer",
+          "ws_clients"
+        ],
+        "title": "HealthResponse"
+      },
+      "Hotspot": {
+        "properties": {
+          "geohash": {
+            "type": "string",
+            "title": "Geohash"
+          },
+          "latitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latitude"
+          },
+          "longitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Longitude"
+          },
+          "peak_cpm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peak Cpm"
+          },
+          "avg_cpm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Cpm"
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count",
+            "default": 0
+          },
+          "windows": {
+            "type": "integer",
+            "title": "Windows",
+            "default": 0
+          },
+          "anomaly_windows": {
+            "type": "integer",
+            "title": "Anomaly Windows",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "geohash"
+        ],
+        "title": "Hotspot"
+      },
+      "RadiationEvent": {
+        "properties": {
+          "sensor_id": {
+            "type": "string",
+            "title": "Sensor Id"
+          },
+          "captured_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Captured At"
+          },
+          "uploaded_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Uploaded At"
+          },
+          "latitude": {
+            "type": "number",
+            "title": "Latitude"
+          },
+          "longitude": {
+            "type": "number",
+            "title": "Longitude"
+          },
+          "cpm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cpm"
+          },
+          "classification": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "SAFE",
+                  "WARN",
+                  "DANGER"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Classification"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "location_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location Name"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          },
+          "surface": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Surface"
+          },
+          "md5sum": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Md5Sum"
+          },
+          "loader_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loader Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sensor_id",
+          "captured_at",
+          "uploaded_at",
+          "latitude",
+          "longitude"
+        ],
+        "title": "RadiationEvent"
+      },
+      "RecentResponse": {
+        "properties": {
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/RadiationEvent"
+            },
+            "type": "array",
+            "title": "Events"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Pass back as ?cursor to fetch the next older page; null on the last page.",
+            "examples": [
+              412
+            ]
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More",
+            "description": "Whether older events are still buffered.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "count",
+          "events"
+        ],
+        "title": "RecentResponse"
+      },
+      "SummaryResponse": {
+        "properties": {
+          "rows": {
+            "type": "integer",
+            "title": "Rows",
+            "default": 0
+          },
+          "cells": {
+            "type": "integer",
+            "title": "Cells",
+            "default": 0
+          },
+          "anomalies": {
+            "type": "integer",
+            "title": "Anomalies",
+            "default": 0
+          },
+          "first_window": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Window"
+          },
+          "last_window": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Window"
+          },
+          "peak_cpm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peak Cpm"
+          }
+        },
+        "type": "object",
+        "title": "SummaryResponse"
+      },
+      "TimeseriesPoint": {
+        "properties": {
+          "window_start": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Window Start"
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count"
+          },
+          "avg_cpm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Cpm"
+          },
+          "max_cpm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Cpm"
+          },
+          "danger": {
+            "type": "integer",
+            "title": "Danger",
+            "default": 0
+          },
+          "anomaly_cells": {
+            "type": "integer",
+            "title": "Anomaly Cells",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "window_start",
+          "total_count"
+        ],
+        "title": "TimeseriesPoint"
+      },
+      "TimespanFilter-Input": {
+        "properties": {
+          "start": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start",
+            "examples": [
+              "2011-03-11T00:00:00+00:00"
+            ]
+          },
+          "end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End",
+            "examples": [
+              "2011-04-30T23:59:59+00:00"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "TimespanFilter"
+      },
+      "TimespanFilter-Output": {
+        "properties": {
+          "start": {
+            "type": "string",
+            "title": "Start",
+            "examples": [
+              "2011-03-11T00:00:00+00:00"
+            ]
+          },
+          "end": {
+            "type": "string",
+            "title": "End",
+            "examples": [
+              "2011-04-30T23:59:59+00:00"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "TimespanFilter"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "health",
+      "description": "Liveness + per-component status (always HTTP 200)."
+    },
+    {
+      "name": "metrics",
+      "description": "Prometheus text exposition (namespace `backend`)."
+    },
+    {
+      "name": "config",
+      "description": "Global pipeline thresholds (admin, token-gated); POST publishes to `config.updates` for Flink. Per-client area/timespan view filters live on the read path instead (ADR-017)."
+    },
+    {
+      "name": "recent",
+      "description": "Recent clean events for map seeding (cursor-paginated, with optional per-client area/timespan filters)."
+    },
+    {
+      "name": "history",
+      "description": "Read-only insights over the aggregated-blob archive in database: summary, per-window CPM time-series, and hotspots. 503 when the archive is unavailable (degraded-safe)."
+    }
+  ]
+}

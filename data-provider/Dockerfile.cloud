@@ -1,0 +1,45 @@
+# Cloud image for the Data Provider.
+#
+# Same producer as data-provider/Dockerfile, but with a small Safecast slice
+# (data/sample.csv) baked in so the container runs self-contained on a cloud
+# host with no mounted volume — the local compose image bind-mounts the dataset
+# instead (see docker-compose.yml). Cloud-friendly defaults are set via ENV and
+# can be overridden at deploy time (KAFKA_BOOTSTRAP_SERVERS is required).
+#
+# NOTE: build from the REPO ROOT (not ./data-provider) so the CSV under data/
+# is inside the build context:
+#   docker build -f data-provider/Dockerfile.cloud -t <user>/radiation-data-provider:cloud .
+#   docker run --rm -e KAFKA_BOOTSTRAP_SERVERS=<host:port> <user>/radiation-data-provider:cloud
+
+# ── Stage 1: build dependency wheels ────────────────────────────────────────
+FROM python:3.11-slim AS builder
+WORKDIR /app
+COPY data-provider/requirements.txt .
+RUN pip wheel --no-cache-dir --no-deps --wheel-dir /app/wheels -r requirements.txt
+
+# ── Stage 2: runtime image ──────────────────────────────────────────────────
+FROM python:3.11-slim
+WORKDIR /opt
+COPY --from=builder /app/wheels /wheels
+COPY --from=builder /app/requirements.txt .
+RUN pip install --no-cache /wheels/*
+
+# Source into a package dir so `python -m data_provider` resolves against
+# data_provider/__main__.py (M1's entry point).
+COPY data-provider/ ./data_provider/
+
+# Bake in the demo slice so no dataset volume is needed in the cloud.
+COPY data/sample.csv /data/demo.csv
+
+# Cloud defaults — override at deploy time. KAFKA_BOOTSTRAP_SERVERS has no
+# default on purpose: the producer must be pointed at the cloud broker.
+ENV CSV_PATH=/data/demo.csv \
+    KAFKA_TOPIC=radiation.raw \
+    PRODUCER_SPEED=50 \
+    METRICS_PORT=8001 \
+    LOG_LEVEL=INFO
+
+# Prometheus producer metrics (http://<host>:8001/metrics).
+EXPOSE 8001
+
+ENTRYPOINT ["python", "-m", "data_provider"]

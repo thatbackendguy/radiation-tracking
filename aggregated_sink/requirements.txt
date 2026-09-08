@@ -1,0 +1,5 @@
+# Kafka client — pinned to match data-provider/backend for one resolved build.
+kafka-python==2.0.2
+# Postgres driver. The -binary wheel ships prebuilt for macOS/Windows/linux-amd64,
+# so it keeps the cross-platform build working with no system libpq needed.
+psycopg2-binary==2.9.9

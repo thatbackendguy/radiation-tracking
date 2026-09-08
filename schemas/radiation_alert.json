@@ -1,0 +1,94 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "radiation_alert",
+  "title": "RadiationAlert",
+  "description": "Schema for alerts on the radiation.alerts Kafka topic, produced by the Flink alert operators (M3). Two kinds, distinguished by 'reason': 'sustained-high' (one record per sensor per sliding window with >= the configured DANGER readings) and 'rising-trend' (one record per geohash cell whose cpm_avg rose across N aggregation windows).",
+  "type": "object",
+  "required": [
+    "sensor_id",
+    "reason",
+    "window_start",
+    "window_end",
+    "cpm"
+  ],
+  "properties": {
+    "sensor_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Sensor that triggered the alert (Device ID from Safecast CSV)."
+    },
+    "reason": {
+      "type": "string",
+      "enum": ["sustained-high", "rising-trend"],
+      "description": "Why the alert fired. 'sustained-high' = repeated DANGER readings within the sliding window. 'rising-trend' = a geohash cell's cpm_avg rose across N consecutive aggregation windows."
+    },
+    "window_start": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Inclusive start of the sliding event-time window (based on captured_at) in which the alert fired."
+    },
+    "window_end": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Exclusive end of the sliding event-time window."
+    },
+    "cpm": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Peak CPM reading among the DANGER-classified readings in the window."
+    },
+    "breach_count": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "On 'sustained-high' alerts: number of DANGER-classified readings in the window (>= the configured min-breaches threshold). On 'rising-trend' alerts: number of consecutive rising aggregation windows behind the trend."
+    },
+    "trend": {
+      "type": ["object", "null"],
+      "description": "Present on 'rising-trend' alerts: the supporting per-cell cpm_avg series. Absent on 'sustained-high' alerts.",
+      "properties": {
+        "window_count": { "type": "integer", "minimum": 2, "description": "Number of consecutive rising aggregation windows." },
+        "cpm_series": { "type": "array", "items": { "type": "number" }, "description": "The cpm_avg values across the rising windows, oldest first." },
+        "delta": { "type": "number", "description": "Total rise across the series (last minus first cpm_avg)." }
+      }
+    },
+    "classification": {
+      "type": "string",
+      "enum": ["DANGER"],
+      "description": "Classification that triggered the alert. Always DANGER for sustained-high alerts."
+    },
+    "latitude": {
+      "type": ["number", "null"],
+      "minimum": -90,
+      "maximum": 90,
+      "description": "Latitude of the latest breaching reading, so the map can place the alert."
+    },
+    "longitude": {
+      "type": ["number", "null"],
+      "minimum": -180,
+      "maximum": 180,
+      "description": "Longitude of the latest breaching reading."
+    },
+    "triggered_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "On 'sustained-high' alerts: captured_at of the latest breaching reading in the window (event time of the most recent breach). On 'rising-trend' alerts: window_end of the latest rising aggregation window."
+    },
+    "geohash": {
+      "type": ["string", "null"],
+      "description": "Geohash cell (same precision as radiation.aggregated) of the alert's breach location, used to join the alert to its aggregated region stats. Null when the alert has no coordinates."
+    },
+    "hot_region": {
+      "type": ["object", "null"],
+      "description": "Additive 'hot region' context: stats of the alert's geohash cell from radiation.aggregated, joined in by the Flink alert-region-join operator (M3). Null when no aggregation has been seen for the cell yet or the alert has no coordinates.",
+      "properties": {
+        "cpm_avg": { "type": ["number", "null"], "description": "Average CPM in the cell's latest aggregation window." },
+        "cpm_max": { "type": ["number", "null"], "description": "Peak CPM in the cell's latest aggregation window." },
+        "count": { "type": "integer", "minimum": 0, "description": "Number of readings in the cell's latest aggregation window." },
+        "worst_classification": { "type": ["string", "null"], "enum": ["SAFE", "WARN", "DANGER", null], "description": "Worst classification seen in the cell." },
+        "centroid_latitude": { "type": ["number", "null"], "minimum": -90, "maximum": 90, "description": "Latitude centroid of the cell's readings." },
+        "centroid_longitude": { "type": ["number", "null"], "minimum": -180, "maximum": 180, "description": "Longitude centroid of the cell's readings." }
+      }
+    }
+  },
+  "additionalProperties": false
+}

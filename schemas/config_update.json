@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "config_update",
+  "title": "ConfigUpdate",
+  "description": "Payload published to the config.updates Kafka topic by the backend (M4). Flink operators (M2/M3) consume this to update threshold broadcast state and filter parameters.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "cpm_warn_threshold": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "CPM value above which a reading is classified WARN (must be less than cpm_danger_threshold)."
+    },
+    "cpm_danger_threshold": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "CPM value above which a reading is classified DANGER."
+    },
+    "area": {
+      "type": "object",
+      "description": "Optional geographic bounding box filter. Flink operators discard events outside this box.",
+      "required": ["min_lat", "max_lat", "min_lon", "max_lon"],
+      "additionalProperties": false,
+      "properties": {
+        "min_lat": { "type": "number", "minimum": -90,  "maximum": 90  },
+        "max_lat": { "type": "number", "minimum": -90,  "maximum": 90  },
+        "min_lon": { "type": "number", "minimum": -180, "maximum": 180 },
+        "max_lon": { "type": "number", "minimum": -180, "maximum": 180 }
+      }
+    },
+    "timespan": {
+      "type": "object",
+      "description": "Optional event-time window filter (ISO 8601). Flink operators discard events outside this window.",
+      "required": ["start", "end"],
+      "additionalProperties": false,
+      "properties": {
+        "start": { "type": "string", "format": "date-time" },
+        "end":   { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "examples": [
+    {
+      "cpm_warn_threshold": 100,
+      "cpm_danger_threshold": 1000
+    },
+    {
+      "cpm_warn_threshold": 50,
+      "cpm_danger_threshold": 500,
+      "area": {
+        "min_lat": 30.0,
+        "max_lat": 42.0,
+        "min_lon": 130.0,
+        "max_lon": 145.0
+      },
+      "timespan": {
+        "start": "2011-03-11T00:00:00Z",
+        "end":   "2011-04-11T00:00:00Z"
+      }
+    }
+  ]
+}
