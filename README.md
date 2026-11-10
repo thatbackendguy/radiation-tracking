@@ -10,6 +10,28 @@ The Safecast radiation dataset is read from CSV by the **Data Provider**, which 
 
 ---
 
+## Interface
+
+The React/Leaflet dashboard streams live sensor readings onto a world map, with a per-client control panel, alert log, and archived insights from Postgres.
+
+### Live dashboard
+
+![Dashboard overview](./interface/dashboard-overview.png)
+
+### Zoomed map with sensor markers
+
+![Zoomed map](./interface/map-zoomed.png)
+
+### Insights archive (historical trends and hotspots)
+
+![Insights panel](./interface/insights-panel.png)
+
+### Pipeline config (admin, global alert thresholds)
+
+![Pipeline config](./interface/pipeline-config.png)
+
+---
+
 ## Quick Start — Local
 
 **Prerequisites:** Docker and Docker Compose installed (no other tools needed).
